@@ -46,3 +46,12 @@ export interface Command {
   createdAt: string
   completedAt?: string
 }
+
+export interface Engineer {
+  uid: string
+  email: string
+  role: string
+  assignedClients: string[] // Array of client IDs this engineer can access
+  createdAt: string
+  lastLogin?: string
+}

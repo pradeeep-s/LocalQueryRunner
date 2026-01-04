@@ -14,7 +14,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MoreHorizontal, Trash2, Code } from "lucide-react"
+import { MoreHorizontal, Trash2, Code, Edit } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useState } from "react"
 import {
@@ -28,18 +28,21 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { CreateQueryDialog } from "@/components/create-query-dialog"
 import { db } from "@/lib/firebase-client"
 import { doc, deleteDoc } from "firebase/firestore"
 
 interface QueriesTableProps {
   queries: Query[]
   onDelete?: () => void
+  onEdit?: () => void
 }
 
-export function QueriesTable({ queries, onDelete }: QueriesTableProps) {
+export function QueriesTable({ queries, onDelete, onEdit }: QueriesTableProps) {
   const { toast } = useToast()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [viewDialogOpen, setViewDialogOpen] = useState(false)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [selectedQuery, setSelectedQuery] = useState<Query | null>(null)
 
   const handleDelete = async () => {
@@ -98,10 +101,10 @@ export function QueriesTable({ queries, onDelete }: QueriesTableProps) {
                 <TableCell className="font-mono text-sm text-muted-foreground">{query.id}</TableCell>
                 <TableCell>
                   <div className="flex flex-wrap gap-1">
-                    {query.variables.length === 0 ? (
+                    {query.variables && query.variables.length === 0 ? (
                       <span className="text-muted-foreground">None</span>
                     ) : (
-                      query.variables.map((variable) => (
+                      query.variables?.map((variable) => (
                         <Badge key={variable} variant="outline">
                           {variable}
                         </Badge>
@@ -110,7 +113,15 @@ export function QueriesTable({ queries, onDelete }: QueriesTableProps) {
                   </div>
                 </TableCell>
                 <TableCell className="text-muted-foreground">
-                  {new Date(query.createdAt).toLocaleDateString()}
+                  {query.createdAt
+                    ? (() => {
+                        const date =
+                          query.createdAt && typeof query.createdAt === "object" && "toDate" in query.createdAt
+                            ? (query.createdAt as any).toDate()
+                            : new Date(query.createdAt as any)
+                        return isNaN(date.getTime()) ? "N/A" : date.toLocaleDateString("en-GB").replaceAll("/", "-")
+                      })()
+                    : "N/A"}
                 </TableCell>
                 <TableCell className="text-right">
                   <DropdownMenu>
@@ -135,6 +146,15 @@ export function QueriesTable({ queries, onDelete }: QueriesTableProps) {
                       <DropdownMenuItem
                         onClick={() => {
                           setSelectedQuery(query)
+                          setEditDialogOpen(true)
+                        }}
+                      >
+                        <Edit className="mr-2 h-4 w-4" />
+                        Edit
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          setSelectedQuery(query)
                           setDeleteDialogOpen(true)
                         }}
                         className="text-destructive focus:text-destructive"
@@ -150,6 +170,15 @@ export function QueriesTable({ queries, onDelete }: QueriesTableProps) {
           </TableBody>
         </Table>
       </div>
+
+      <CreateQueryDialog
+        open={editDialogOpen}
+        onOpenChange={setEditDialogOpen}
+        editQuery={selectedQuery}
+        onSuccess={() => {
+          if (onEdit) onEdit()
+        }}
+      />
 
       <Dialog open={viewDialogOpen} onOpenChange={setViewDialogOpen}>
         <DialogContent className="sm:max-w-[600px]">

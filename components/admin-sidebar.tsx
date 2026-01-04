@@ -3,56 +3,90 @@
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
-import { LayoutDashboard, Users, UserCog, Database, FileText, Play, ScrollText } from "lucide-react"
+import { LayoutDashboard, Users, UserCog, Users2, Database, FileText, Play, ScrollText } from "lucide-react"
+import { useEffect, useState } from "react"
+import { auth } from "@/lib/firebase-client"
 
 const menuItems = [
   {
     title: "Dashboard",
     href: "/admin/dashboard",
     icon: LayoutDashboard,
+    roles: ["admin", "engineer"],
   },
   {
     title: "Clients",
     href: "/admin/clients",
     icon: Users,
+    roles: ["admin", "engineer"],
   },
   {
     title: "Agents",
     href: "/admin/agents",
     icon: UserCog,
+    roles: ["admin", "engineer"],
+  },
+  {
+    title: "Engineers",
+    href: "/admin/engineers",
+    icon: Users2,
+    roles: ["admin"],
   },
   {
     title: "Database Credentials",
     href: "/admin/database-credentials",
     icon: Database,
+    roles: ["admin"],
   },
   {
     title: "Queries",
     href: "/admin/queries",
     icon: FileText,
+    roles: ["admin"],
   },
   {
     title: "Execute Query",
     href: "/admin/execute-query",
     icon: Play,
+    roles: ["admin", "engineer"],
   },
   {
     title: "Logs",
     href: "/admin/logs",
     icon: ScrollText,
+    roles: ["admin", "engineer"],
   },
 ]
 
 export function AdminSidebar() {
   const pathname = usePathname()
+  const [userRole, setUserRole] = useState<string>("admin")
+  const [filteredMenuItems, setFilteredMenuItems] = useState(menuItems)
+
+  useEffect(() => {
+    const getCurrentRole = async () => {
+      const user = auth.currentUser
+      if (user) {
+        const idTokenResult = await user.getIdTokenResult()
+        const role = (idTokenResult.claims.role as string) || "admin"
+        setUserRole(role)
+
+        const filtered = menuItems.filter((item) => item.roles.includes(role))
+        setFilteredMenuItems(filtered)
+      }
+    }
+    getCurrentRole()
+  }, [])
 
   return (
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 border-r border-sidebar-border bg-sidebar">
       <div className="flex h-16 items-center border-b border-sidebar-border px-6">
-        <h1 className="text-lg font-semibold text-sidebar-foreground">Admin Dashboard</h1>
+        <h1 className="text-lg font-semibold text-sidebar-foreground">
+          {userRole === "engineer" ? "Engineer Dashboard" : "Admin Dashboard"}
+        </h1>
       </div>
       <nav className="space-y-1 p-4">
-        {menuItems.map((item) => {
+        {filteredMenuItems.map((item) => {
           const Icon = item.icon
           const isActive = pathname === item.href
           return (

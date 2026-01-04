@@ -26,11 +26,26 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.clientId;
     }
 
+    // <CHANGE> Add helper functions for Engineer role
+    function isEngineer() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "engineer";
+    }
+
+    function engineerAssignedClients() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assignedClients;
+    }
+
+    function isEngineerAssignedToClient(clientId) {
+      return isEngineer() && clientId in engineerAssignedClients();
+    }
+
     // ---------------------------
     // USERS COLLECTION
     // ---------------------------
     match /users/{uid} {
-      allow read: if request.auth.uid == uid || isAdmin();
+      allow read: if request.auth.uid == uid || isAdmin() || isEngineer();
       allow write: if isAdmin();
     }
 
@@ -38,14 +53,17 @@ service cloud.firestore {
     // CLIENTS COLLECTION
     // ---------------------------
     match /clients/{clientId} {
-      allow read, write: if isAdmin();
+      // <CHANGE> Allow engineers to read clients they are assigned to
+      allow read: if isAdmin() || isEngineerAssignedToClient(clientId);
+      allow write: if isAdmin();
     }
 
     // ---------------------------
     // DB_CONFIGS COLLECTION
     // ---------------------------
     match /db_configs/{clientId} {
-      allow read: if isAdmin() || (isAgent() && clientId == agentClientId());
+      // <CHANGE> Allow engineers to read db configs for their assigned clients
+      allow read: if isAdmin() || (isAgent() && clientId == agentClientId()) || isEngineerAssignedToClient(clientId);
       allow write: if isAdmin();
     }
 
@@ -53,7 +71,8 @@ service cloud.firestore {
     // QUERIES COLLECTION
     // ---------------------------
     match /queries/{queryId} {
-      allow read: if isAdmin() || isAgent();
+      // <CHANGE> Allow engineers to read queries
+      allow read: if isAdmin() || isAgent() || isEngineer();
       allow write: if isAdmin();
     }
 
@@ -61,6 +80,7 @@ service cloud.firestore {
     // COMMANDS COLLECTION
     // ---------------------------
     match /commands/{commandId} {
+      // <CHANGE> Allow engineers to manage commands for their assigned clients
       allow read, write: if isAdmin();
 
       allow read, update: if isAgent()
@@ -68,13 +88,21 @@ service cloud.firestore {
 
       allow create: if isAgent()
         && request.resource.data.clientId == agentClientId();
+
+      allow read, update: if isEngineer()
+        && resource.data.clientId in engineerAssignedClients();
+
+      allow create: if isEngineer()
+        && request.resource.data.clientId in engineerAssignedClients();
     }
 
     // ---------------------------
     // LOGS COLLECTION
     // ---------------------------
     match /logs/{logId} {
-      allow read, write: if isAdmin();
+      // <CHANGE> Allow engineers to read logs
+      allow read: if isAdmin() || isEngineer();
+      allow write: if isAdmin();
     }
   }
 }

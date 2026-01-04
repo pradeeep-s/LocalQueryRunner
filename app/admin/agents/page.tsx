@@ -5,8 +5,8 @@ import { AgentsTable } from "@/components/agents-table"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useEffect, useState } from "react"
 import type { Agent, Client } from "@/types"
-import { db } from "@/lib/firebase-client"
-import { collection, getDocs } from "firebase/firestore"
+import { db, auth } from "@/lib/firebase-client"
+import { collection, getDocs, doc, getDoc } from "firebase/firestore"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertCircle, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -16,6 +16,7 @@ export default function AgentsPage() {
   const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [userRole, setUserRole] = useState<string>("admin")
 
   useEffect(() => {
     fetchData()
@@ -27,23 +28,47 @@ export default function AgentsPage() {
       setError(null)
       console.log("[v0] Fetching agents and clients from Firestore")
 
+      const user = auth.currentUser
+      if (!user) return
+
+      const idTokenResult = await user.getIdTokenResult()
+      const role = (idTokenResult.claims.role as string) || "admin"
+      setUserRole(role)
+
       // Fetch clients
       const clientsSnapshot = await getDocs(collection(db, "clients"))
-      const clientsData = clientsSnapshot.docs.map((doc) => ({
+      let clientsData = clientsSnapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       })) as Client[]
+
+      if (role === "engineer") {
+        const userDocRef = doc(db, "users", user.uid)
+        const userDoc = await getDoc(userDocRef)
+
+        if (userDoc.exists()) {
+          const userData = userDoc.data()
+          const assignedClients = userData.assignedClients || []
+          clientsData = clientsData.filter((client) => assignedClients.includes(client.id))
+        }
+      }
+
       setClients(clientsData)
       console.log("[v0] Fetched clients:", clientsData.length)
 
       // Fetch users (agents)
       const usersSnapshot = await getDocs(collection(db, "users"))
-      const agentsData = usersSnapshot.docs
+      let agentsData = usersSnapshot.docs
         .map((doc) => ({
           uid: doc.id,
           ...doc.data(),
         }))
         .filter((user: any) => user.role === "agent") as Agent[]
+
+      if (role === "engineer") {
+        const assignedClientIds = clientsData.map((c) => c.id)
+        agentsData = agentsData.filter((agent) => assignedClientIds.includes(agent.clientId))
+      }
 
       console.log("[v0] Fetched agents:", agentsData.length)
       setAgents(agentsData)
@@ -66,9 +91,13 @@ export default function AgentsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Agents</h1>
-          <p className="text-muted-foreground">Manage agent accounts and their client assignments</p>
+          <p className="text-muted-foreground">
+            {userRole === "engineer"
+              ? "Manage agents assigned to your clients"
+              : "Manage agent accounts and their client assignments"}
+          </p>
         </div>
-        <CreateAgentDialog clients={clients} onSuccess={fetchData} />
+        {userRole === "admin" && <CreateAgentDialog clients={clients} onSuccess={fetchData} />}
       </div>
 
       {error && (
@@ -94,19 +123,25 @@ export default function AgentsPage() {
         </Alert>
       )}
 
-      <Alert>
-        <AlertCircle className="h-4 w-4" />
-        <AlertTitle>Agent Creation Requires Manual Setup</AlertTitle>
-        <AlertDescription>
-          Agent accounts must be created manually in Firebase Console due to environment limitations. See
-          AGENT_CREATION_GUIDE.md for detailed instructions or use the scripts/create-agent.js script.
-        </AlertDescription>
-      </Alert>
+      {userRole === "admin" && (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Agent Creation Requires Manual Setup</AlertTitle>
+          <AlertDescription>
+            Agent accounts must be created manually in Firebase Console due to environment limitations. See
+            AGENT_CREATION_GUIDE.md for detailed instructions or use the scripts/create-agent.js script.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardHeader>
-          <CardTitle>All Agents</CardTitle>
-          <CardDescription>View and manage all agent accounts in the system</CardDescription>
+          <CardTitle>{userRole === "engineer" ? "Assigned Agents" : "All Agents"}</CardTitle>
+          <CardDescription>
+            {userRole === "engineer"
+              ? "View agents assigned to your clients"
+              : "View and manage all agent accounts in the system"}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? (

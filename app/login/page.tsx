@@ -41,17 +41,17 @@ export default function LoginPage() {
       const idTokenResult = await user.getIdTokenResult()
       console.log("[v0] Token claims:", idTokenResult.claims)
 
-      // Check if user has admin role
-      if (idTokenResult.claims.role !== "admin") {
-        console.log("[v0] User does not have admin role")
-        setError("Access denied. Admin privileges required. Please contact system administrator to set admin role.")
+      const role = idTokenResult.claims.role
+      if (role !== "admin" && role !== "engineer") {
+        console.log("[v0] User does not have admin or engineer role")
+        setError("Access denied. Admin or Engineer privileges required. Please contact system administrator to set the appropriate role.")
         await auth.signOut()
         setLoading(false)
         return
       }
 
-      // Admin verified, redirecting to dashboard
-      console.log("[v0] Admin verified, redirecting to dashboard")
+      // Admin/Engineer verified, redirecting to dashboard
+      console.log("[v0] User verified, redirecting to dashboard")
 
       window.location.href = "/admin/dashboard"
     } catch (err: any) {
