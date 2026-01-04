@@ -15,26 +15,27 @@ export default function QueriesPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    async function fetchQueries() {
-      try {
-        const queriesSnap = await getDocs(collection(db, "queries"))
-        const queriesData = queriesSnap.docs.map((doc) => ({
-          ...doc.data(),
-          id: doc.id,
-        })) as Query[]
-        setQueries(queriesData)
-      } catch (error) {
-        console.error("[v0] Error fetching queries:", error)
-      } finally {
-        setLoading(false)
-      }
-    }
     fetchQueries()
   }, [])
 
   const handleRefresh = () => {
     setLoading(true)
-    window.location.reload()
+    fetchQueries()
+  }
+
+  async function fetchQueries() {
+    try {
+      const queriesSnap = await getDocs(collection(db, "queries"))
+      const queriesData = queriesSnap.docs.map((doc) => ({
+        ...doc.data(),
+        id: doc.id,
+      })) as Query[]
+      setQueries(queriesData)
+    } catch (error) {
+      console.error("[v0] Error fetching queries:", error)
+    } finally {
+      setLoading(false)
+    }
   }
 
   if (loading) {
@@ -64,7 +65,7 @@ export default function QueriesPage() {
           <CardDescription>SQL queries available for execution with client data</CardDescription>
         </CardHeader>
         <CardContent>
-          <QueriesTable queries={queries} onDelete={handleRefresh} />
+          <QueriesTable queries={queries} onDelete={handleRefresh} onEdit={handleRefresh} />
         </CardContent>
       </Card>
     </div>

@@ -4,8 +4,8 @@ import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
-import { db } from "@/lib/firebase-client"
-import { collection, getDocs, query, orderBy, limit } from "firebase/firestore"
+import { db, auth } from "@/lib/firebase-client"
+import { collection, getDocs, query, orderBy, limit, doc, getDoc } from "firebase/firestore"
 import type { Client, Query as QueryType, Command } from "@/types"
 
 export default function LogsPage() {
@@ -13,10 +13,18 @@ export default function LogsPage() {
   const [clients, setClients] = useState<Client[]>([])
   const [queries, setQueries] = useState<QueryType[]>([])
   const [loading, setLoading] = useState(true)
+  const [userRole, setUserRole] = useState<string>("admin")
 
   useEffect(() => {
     async function fetchData() {
       try {
+        const user = auth.currentUser
+        if (!user) return
+
+        const idTokenResult = await user.getIdTokenResult()
+        const role = (idTokenResult.claims.role as string) || "admin"
+        setUserRole(role)
+
         const commandsQuery = query(collection(db, "commands"), orderBy("createdAt", "desc"), limit(100))
         const [commandsSnap, clientsSnap, queriesSnap] = await Promise.all([
           getDocs(commandsQuery),
@@ -24,15 +32,23 @@ export default function LogsPage() {
           getDocs(collection(db, "queries")),
         ])
 
-        const commandsData = commandsSnap.docs.map((doc) => ({
+        let commandsData = commandsSnap.docs.map((doc) => ({
           ...doc.data(),
           id: doc.id,
         })) as Command[]
 
-        const clientsData = clientsSnap.docs.map((doc) => ({
+        let clientsData = clientsSnap.docs.map((doc) => ({
           ...doc.data(),
           id: doc.id,
         })) as Client[]
+
+        if (role === "engineer") {
+          const userDoc = await getDoc(doc(db, "users", user.uid))
+          const assignedClients = userDoc.data()?.assignedClients || []
+
+          clientsData = clientsData.filter((c) => assignedClients.includes(c.id))
+          commandsData = commandsData.filter((cmd) => assignedClients.includes(cmd.clientId))
+        }
 
         const queriesData = queriesSnap.docs.map((doc) => ({
           ...doc.data(),

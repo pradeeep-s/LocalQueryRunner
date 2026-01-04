@@ -27,16 +27,38 @@ import {
 } from "@/components/ui/alert-dialog"
 import { getFirestore, doc, updateDoc, deleteDoc } from "firebase/firestore"
 import { AssignAgentDialog } from "./assign-agent-dialog"
+import { EditClientDialog } from "./edit-client-dialog"
 
 interface ClientsTableProps {
   clients: Client[]
   onUpdate: () => void
 }
 
+function formatDate(dateValue: any): string {
+  if (!dateValue) return "Never"
+
+  try {
+    if (dateValue && typeof dateValue === "object" && "toDate" in dateValue) {
+      return dateValue.toDate().toLocaleDateString()
+    }
+
+    const date = new Date(dateValue)
+    if (isNaN(date.getTime())) {
+      return "Invalid Date"
+    }
+
+    return date.toLocaleDateString()
+  } catch (error) {
+    console.error("[v0] Date formatting error:", error)
+    return "Invalid Date"
+  }
+}
+
 export function ClientsTable({ clients, onUpdate }: ClientsTableProps) {
   const { toast } = useToast()
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [assignAgentOpen, setAssignAgentOpen] = useState(false)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [selectedClient, setSelectedClient] = useState<Client | null>(null)
 
   const handleDelete = async () => {
@@ -150,9 +172,7 @@ export function ClientsTable({ clients, onUpdate }: ClientsTableProps) {
                     </Button>
                   )}
                 </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {client.lastSeen ? new Date(client.lastSeen).toLocaleDateString() : "Never"}
-                </TableCell>
+                <TableCell className="text-muted-foreground">{formatDate(client.lastSeen)}</TableCell>
                 <TableCell className="text-right">
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
@@ -164,6 +184,15 @@ export function ClientsTable({ clients, onUpdate }: ClientsTableProps) {
                     <DropdownMenuContent align="end">
                       <DropdownMenuLabel>Actions</DropdownMenuLabel>
                       <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onClick={() => {
+                          setSelectedClient(client)
+                          setEditDialogOpen(true)
+                        }}
+                      >
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Edit
+                      </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => handleToggleStatus(client)}>
                         <Pencil className="mr-2 h-4 w-4" />
                         {client.status === "active" ? "Disable" : "Enable"}
@@ -188,12 +217,20 @@ export function ClientsTable({ clients, onUpdate }: ClientsTableProps) {
       </div>
 
       {selectedClient && (
-        <AssignAgentDialog
-          open={assignAgentOpen}
-          onOpenChange={setAssignAgentOpen}
-          client={selectedClient}
-          onSuccess={onUpdate}
-        />
+        <>
+          <EditClientDialog
+            open={editDialogOpen}
+            onOpenChange={setEditDialogOpen}
+            client={selectedClient}
+            onSuccess={onUpdate}
+          />
+          <AssignAgentDialog
+            open={assignAgentOpen}
+            onOpenChange={setAssignAgentOpen}
+            client={selectedClient}
+            onSuccess={onUpdate}
+          />
+        </>
       )}
 
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

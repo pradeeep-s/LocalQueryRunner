@@ -12,12 +12,27 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { LogOut, User } from "lucide-react"
 import { auth } from "@/lib/firebase-client"
+import { useEffect, useState } from "react"
 
 interface AdminHeaderProps {
   userEmail: string
 }
 
 export function AdminHeader({ userEmail }: AdminHeaderProps) {
+  const [userRole, setUserRole] = useState<string>("Admin")
+
+  useEffect(() => {
+    const getCurrentRole = async () => {
+      const user = auth.currentUser
+      if (user) {
+        const idTokenResult = await user.getIdTokenResult()
+        const role = idTokenResult.claims.role as string
+        setUserRole(role === "engineer" ? "Engineer" : "Admin")
+      }
+    }
+    getCurrentRole()
+  }, [])
+
   const handleLogout = async () => {
     try {
       await auth.signOut()
@@ -50,7 +65,7 @@ export function AdminHeader({ userEmail }: AdminHeaderProps) {
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>
               <div className="flex flex-col space-y-1">
-                <p className="text-sm font-medium leading-none">Admin</p>
+                <p className="text-sm font-medium leading-none">{userRole}</p>
                 <p className="text-xs leading-none text-muted-foreground">{userEmail}</p>
               </div>
             </DropdownMenuLabel>

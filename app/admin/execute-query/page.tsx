@@ -11,16 +11,19 @@ import { useToast } from "@/hooks/use-toast"
 import { Badge } from "@/components/ui/badge"
 import { Play, Loader2 } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
 import type { Client, Query, Command } from "@/types"
-import { db } from "@/lib/firebase-client"
+import { db, auth } from "@/lib/firebase-client"
 import { collection, getDocs, doc, getDoc, addDoc, serverTimestamp } from "firebase/firestore"
-import { log } from "console"
 
 export default function ExecuteQueryPage() {
   const [clients, setClients] = useState<Client[]>([])
   const [queries, setQueries] = useState<Query[]>([])
   const [selectedClientId, setSelectedClientId] = useState("")
   const [selectedQueryId, setSelectedQueryId] = useState("")
+  const [customSql, setCustomSql] = useState("")
+  const [executionType, setExecutionType] = useState<"predefined" | "custom">("predefined")
   const [variables, setVariables] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [command, setCommand] = useState<Command | null>(null)
@@ -30,17 +33,27 @@ export default function ExecuteQueryPage() {
   useEffect(() => {
     async function fetchData() {
       try {
-        console.log("pradeep Clients:")
-        console.log("pradeep Queries:")
+        const user = auth.currentUser
+        if (!user) return
+
+        const idTokenResult = await user.getIdTokenResult()
+        const role = (idTokenResult.claims.role as string) || "admin"
+
         const [clientsSnap, queriesSnap] = await Promise.all([
           getDocs(collection(db, "clients")),
           getDocs(collection(db, "queries")),
         ])
 
-        const clientsData = clientsSnap.docs.map((doc) => ({
+        let clientsData = clientsSnap.docs.map((doc) => ({
           ...doc.data(),
           id: doc.id,
         })) as Client[]
+
+        if (role === "engineer") {
+          const userDoc = await getDoc(doc(db, "users", user.uid))
+          const assignedClients = userDoc.data()?.assignedClients || []
+          clientsData = clientsData.filter((c) => assignedClients.includes(c.id))
+        }
 
         const queriesData = queriesSnap.docs.map((doc) => ({
           ...doc.data(),
@@ -49,7 +62,6 @@ export default function ExecuteQueryPage() {
 
         setClients(clientsData.filter((c) => c.status === "active"))
         setQueries(queriesData)
-        
       } catch (error) {
         console.error("[v0] Error fetching data:", error)
       }
@@ -68,12 +80,11 @@ export default function ExecuteQueryPage() {
       setVariables(newVariables)
     }
   }, [selectedQuery])
-  
+
   useEffect(() => {
     let interval: NodeJS.Timeout
 
     if (polling && command) {
-     
       interval = setInterval(async () => {
         try {
           const commandDoc = await getDoc(doc(db, "commands", command.id))
@@ -99,23 +110,27 @@ export default function ExecuteQueryPage() {
     e.preventDefault()
     setLoading(true)
     setCommand(null)
-    
-   
-    
+
     try {
-
-
-      const commandRef = await addDoc(collection(db, "commands"), {
+      const commandPayload: any = {
         clientId: selectedClientId,
-        queryId: selectedQueryId,
-        variables,
         status: "pending",
         createdAt: serverTimestamp(),
-      })
+      }
+
+      if (executionType === "predefined") {
+        commandPayload.queryId = selectedQueryId
+        commandPayload.variables = variables
+      } else {
+        commandPayload.sql = customSql
+        commandPayload.isCustom = true
+      }
+
+      const commandRef = await addDoc(collection(db, "commands"), commandPayload)
 
       toast({
         title: "Query submitted",
-        description: "Your query has been submitted for execution.",
+        description: `Your ${executionType} query has been submitted for execution.`,
       })
 
       const commandDoc = await getDoc(commandRef)
@@ -140,14 +155,14 @@ export default function ExecuteQueryPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Execute Query</h1>
-        <p className="text-muted-foreground">Run predefined queries with client-specific parameters</p>
+        <p className="text-muted-foreground">Run predefined queries or execute custom SQL on connected clients</p>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Query Execution</CardTitle>
-            <CardDescription>Select a client and query to execute</CardDescription>
+            <CardDescription>Select a client and define your query</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleExecute} className="space-y-4">
@@ -171,50 +186,86 @@ export default function ExecuteQueryPage() {
                 </Select>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="query">Query</Label>
-                <Select
-                  value={selectedQueryId}
-                  onValueChange={setSelectedQueryId}
-                  disabled={loading || queries.length === 0}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a query" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {queries.map((query) => (
-                      <SelectItem key={query.id} value={query.id}>
-                        {query.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <Tabs value={executionType} onValueChange={(v) => setExecutionType(v as any)} className="w-full">
+                <TabsList className="grid w-full grid-cols-2 mb-4">
+                  <TabsTrigger value="predefined">Predefined Queries</TabsTrigger>
+                  <TabsTrigger value="custom">Custom SQL</TabsTrigger>
+                </TabsList>
 
-              {selectedQuery && selectedQuery.variables.length > 0 && (
-                <div className="space-y-4 rounded-lg border p-4">
-                  <h4 className="text-sm font-medium">Query Variables</h4>
-                  {selectedQuery.variables.map((variable) => (
-                    <div key={variable} className="space-y-2">
-                      <Label htmlFor={variable}>{variable}</Label>
-                      <Input
-                        id={variable}
-                        value={variables[variable] || ""}
-                        onChange={(e) =>
-                          setVariables({
-                            ...variables,
-                            [variable]: e.target.value,
-                          })
-                        }
-                        disabled={loading}
-                        required
-                      />
+                <TabsContent value="predefined" className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="query">Select Predefined Query</Label>
+                    <Select
+                      value={selectedQueryId}
+                      onValueChange={setSelectedQueryId}
+                      disabled={loading || queries.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select a query" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {queries.map((query) => (
+                          <SelectItem key={query.id} value={query.id}>
+                            {query.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {selectedQuery && selectedQuery.variables.length > 0 && (
+                    <div className="space-y-4 rounded-lg border p-4">
+                      <h4 className="text-sm font-medium">Query Variables</h4>
+                      {selectedQuery.variables.map((variable) => (
+                        <div key={variable} className="space-y-2">
+                          <Label htmlFor={variable}>{variable}</Label>
+                          <Input
+                            id={variable}
+                            value={variables[variable] || ""}
+                            onChange={(e) =>
+                              setVariables({
+                                ...variables,
+                                [variable]: e.target.value,
+                              })
+                            }
+                            disabled={loading}
+                            required
+                          />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
+                  )}
+                </TabsContent>
 
-              <Button type="submit" className="w-full" disabled={loading || !selectedClientId || !selectedQueryId}>
+                <TabsContent value="custom" className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="custom-sql">SQL Query</Label>
+                    <Textarea
+                      id="custom-sql"
+                      placeholder="SELECT * FROM users LIMIT 10"
+                      className="font-mono text-sm min-h-[200px]"
+                      value={customSql}
+                      onChange={(e) => setCustomSql(e.target.value)}
+                      disabled={loading}
+                      required={executionType === "custom"}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Warning: Use caution when running custom SQL queries directly on client databases.
+                    </p>
+                  </div>
+                </TabsContent>
+              </Tabs>
+
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={
+                  loading ||
+                  !selectedClientId ||
+                  (executionType === "predefined" && !selectedQueryId) ||
+                  (executionType === "custom" && !customSql.trim())
+                }
+              >
                 {loading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -223,7 +274,7 @@ export default function ExecuteQueryPage() {
                 ) : (
                   <>
                     <Play className="mr-2 h-4 w-4" />
-                    Execute Query
+                    Execute {executionType === "predefined" ? "Predefined" : "Custom"} Query
                   </>
                 )}
               </Button>
