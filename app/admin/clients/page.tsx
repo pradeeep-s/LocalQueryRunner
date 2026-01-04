@@ -2,10 +2,24 @@
 
 import { CreateClientDialog } from "@/components/create-client-dialog"
 import { ClientsTable } from "@/components/clients-table"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import { useEffect, useState } from "react"
 import type { Client } from "@/types"
-import { getFirestore, collection, getDocs, query, orderBy, doc, getDoc } from "firebase/firestore"
+import {
+  getFirestore,
+  collection,
+  getDocs,
+  query,
+  orderBy,
+  doc,
+  getDoc,
+} from "firebase/firestore"
 import { auth } from "@/lib/firebase-client"
 
 export default function ClientsPage() {
@@ -19,40 +33,73 @@ export default function ClientsPage() {
 
   const fetchClients = async () => {
     try {
+      setLoading(true)
+
       const user = auth.currentUser
       if (!user) return
 
+      // 🔑 Get role from custom claims
       const idTokenResult = await user.getIdTokenResult()
       const role = (idTokenResult.claims.role as string) || "admin"
       setUserRole(role)
 
       const db = getFirestore()
-      const clientsRef = collection(db, "clients")
-      const q = query(clientsRef, orderBy("createdAt", "desc"))
-      const snapshot = await getDocs(q)
 
-      let clientsData = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Client[]
+      /* ===================== ADMIN ===================== */
+      if (role === "admin") {
+        const q = query(
+          collection(db, "clients"),
+          orderBy("createdAt", "desc")
+        )
 
-      if (role === "engineer") {
-        const userDocRef = doc(db, "users", user.uid)
-        const userDoc = await getDoc(userDocRef)
+        const snapshot = await getDocs(q)
 
-        if (userDoc.exists()) {
-          const userData = userDoc.data()
-          const assignedClients = userData.assignedClients || []
+        const clientsData = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as Client[]
 
-          console.log("[v0] Engineer assigned clients:", assignedClients)
-          clientsData = clientsData.filter((client) => assignedClients.includes(client.id))
-        }
+        setClients(clientsData)
+        return
       }
 
-      console.log("[v0] Fetched clients:", clientsData.length)
+      /* ===================== ENGINEER ===================== */
+
+      // 1️⃣ Read engineer's OWN user document
+      const userDoc = await getDoc(
+        doc(db, "users", user.uid)
+      )
+
+      if (!userDoc.exists()) {
+        console.error("Engineer user document not found")
+        setClients([])
+        return
+      }
+
+      const assignedClients: string[] =
+        userDoc.data().assignedClients || []
+
+      console.log("[v0] Engineer assigned clients:", assignedClients)
+
+      // 2️⃣ Fetch ONLY assigned client documents
+      const clientDocs = await Promise.all(
+        assignedClients.map((clientId: string) =>
+          getDoc(doc(db, "clients", clientId))
+        )
+      )
+
+      const clientsData = clientDocs
+        .filter((d) => d.exists())
+        .map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Client[]
+
       setClients(clientsData)
+
     } catch (error) {
       console.error("[v0] Failed to fetch clients:", error)
+      setClients([])
     } finally {
       setLoading(false)
     }
@@ -69,22 +116,34 @@ export default function ClientsPage() {
               : "Manage client accounts and their configurations"}
           </p>
         </div>
-        {userRole === "admin" && <CreateClientDialog onSuccess={fetchClients} />}
+
+        {userRole === "admin" && (
+          <CreateClientDialog onSuccess={fetchClients} />
+        )}
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>{userRole === "engineer" ? "Assigned Clients" : "All Clients"}</CardTitle>
+          <CardTitle>
+            {userRole === "engineer" ? "Assigned Clients" : "All Clients"}
+          </CardTitle>
           <CardDescription>
             {userRole === "engineer"
-              ? "View and manage client accounts assigned to you"
-              : "View and manage all client accounts in the system"}
+              ? "Clients assigned to you"
+              : "All client accounts in the system"}
           </CardDescription>
         </CardHeader>
+
         <CardContent>
           {loading ? (
             <div className="flex h-[400px] items-center justify-center">
               <p className="text-muted-foreground">Loading clients...</p>
+            </div>
+          ) : clients.length === 0 ? (
+            <div className="flex h-[400px] items-center justify-center">
+              <p className="text-muted-foreground">
+                No clients assigned
+              </p>
             </div>
           ) : (
             <ClientsTable clients={clients} onUpdate={fetchClients} />
