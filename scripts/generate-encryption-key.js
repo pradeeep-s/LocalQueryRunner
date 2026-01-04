@@ -1,0 +1,32 @@
+#!/usr/bin/env node
+
+const crypto = require("crypto")
+
+console.log("\n=".repeat(70))
+console.log("  ENCRYPTION KEY GENERATOR")
+console.log("=".repeat(70))
+console.log("\nGenerating a secure 256-bit encryption key...\n")
+
+const encryptionKey = crypto.randomBytes(32).toString("hex")
+
+console.log("Your encryption key (keep this secure!):\n")
+console.log("  " + encryptionKey)
+console.log("\n" + "-".repeat(70))
+console.log("\nAdd this to your environment variables:\n")
+console.log(`  ENCRYPTION_KEY=${encryptionKey}`)
+console.log("\n" + "-".repeat(70))
+console.log("\nFor local development, add to .env.local:")
+console.log(`  echo "ENCRYPTION_KEY=${encryptionKey}" >> .env.local`)
+console.log("\nFor Vercel deployment:")
+console.log("  1. Go to Project Settings → Environment Variables")
+console.log("  2. Add key: ENCRYPTION_KEY")
+console.log("  3. Add value: (paste the key above)")
+console.log("  4. Select all environments")
+console.log("  5. Save and redeploy")
+console.log("\n" + "=".repeat(70))
+console.log("\n⚠️  SECURITY WARNING:")
+console.log("  - Never commit this key to version control")
+console.log("  - Store it securely (password manager recommended)")
+console.log("  - Use different keys for dev/staging/production")
+console.log("  - If you lose this key, encrypted data cannot be recovered")
+console.log("\n" + "=".repeat(70) + "\n")

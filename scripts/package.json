@@ -1,0 +1,12 @@
+{
+  "name": "admin-dashboard-scripts",
+  "version": "1.0.0",
+  "description": "Helper scripts for Admin Dashboard agent creation",
+  "main": "create-agent.js",
+  "scripts": {
+    "create-agent": "node create-agent.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}
