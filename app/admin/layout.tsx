@@ -27,8 +27,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         console.log("[v0] Token claims:", idTokenResult.claims)
 
         const userRole = idTokenResult.claims.role as string
-        if (userRole !== "admin" && userRole !== "engineer") {
-          console.log("[v0] User does not have admin or engineer role")
+        if (userRole !== "admin" && userRole !== "engineer" && userRole !== "agent") {
+          console.log("[v0] User does not have admin, engineer, or agent role")
           window.location.href = "/login"
           return
         }

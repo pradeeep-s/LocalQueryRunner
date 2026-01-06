@@ -42,15 +42,17 @@ export default function LoginPage() {
       console.log("[v0] Token claims:", idTokenResult.claims)
 
       const role = idTokenResult.claims.role
-      if (role !== "admin" && role !== "engineer") {
-        console.log("[v0] User does not have admin or engineer role")
-        setError("Access denied. Admin or Engineer privileges required. Please contact system administrator to set the appropriate role.")
+      if (role !== "admin" && role !== "engineer" && role !== "agent") {
+        console.log("[v0] User does not have admin, engineer, or agent role")
+        setError(
+          "Access denied. Admin, Engineer, or Agent privileges required. Please contact system administrator to set the appropriate role.",
+        )
         await auth.signOut()
         setLoading(false)
         return
       }
 
-      // Admin/Engineer verified, redirecting to dashboard
+      // User verified, redirecting to dashboard
       console.log("[v0] User verified, redirecting to dashboard")
 
       window.location.href = "/admin/dashboard"
@@ -72,7 +74,7 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
           <CardTitle className="text-2xl font-bold">Admin Login</CardTitle>
-          <CardDescription>Enter your credentials to access the admin dashboard</CardDescription>
+          <CardDescription>Enter your credentials to access the admin dashboard or generate reports</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">

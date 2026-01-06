@@ -18,8 +18,9 @@ import { Textarea } from "@/components/ui/textarea"
 import { Plus, X } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Badge } from "@/components/ui/badge"
+import { Checkbox } from "@/components/ui/checkbox"
 import { db } from "@/lib/firebase-client"
-import { collection, addDoc, serverTimestamp, doc, updateDoc } from "firebase/firestore"
+import { collection, addDoc, serverTimestamp, doc, updateDoc, getDocs, query, where } from "firebase/firestore"
 import type { Query } from "@/types"
 
 interface CreateQueryDialogProps {
@@ -27,6 +28,11 @@ interface CreateQueryDialogProps {
   editQuery?: Query | null
   open?: boolean
   onOpenChange?: (open: boolean) => void
+}
+
+interface AgentOption {
+  uid: string
+  email: string
 }
 
 export function CreateQueryDialog({
@@ -44,17 +50,50 @@ export function CreateQueryDialog({
   const [variables, setVariables] = useState<string[]>(editQuery?.variables ?? [])
   const [currentVariable, setCurrentVariable] = useState("")
   const [loading, setLoading] = useState(false)
+  const [agents, setAgents] = useState<AgentOption[]>([])
+  const [selectedAgents, setSelectedAgents] = useState<string[]>(editQuery?.assignedAgents ?? [])
+  const [agentsLoading, setAgentsLoading] = useState(false)
   const { toast } = useToast()
+
+  useEffect(() => {
+    if (open && agents.length === 0) {
+      loadAgents()
+    }
+  }, [open])
+
+  async function loadAgents() {
+    setAgentsLoading(true)
+    try {
+      const q = query(collection(db, "users"), where("role", "==", "agent"))
+      const agentsSnap = await getDocs(q)
+      const agentsData = agentsSnap.docs.map((doc) => ({
+        uid: doc.id,
+        email: doc.data().email,
+      }))
+      setAgents(agentsData)
+    } catch (err) {
+      console.error("[v0] Error loading agents:", err)
+      toast({
+        title: "Error",
+        description: "Failed to load agents",
+        variant: "destructive",
+      })
+    } finally {
+      setAgentsLoading(false)
+    }
+  }
 
   useEffect(() => {
     if (editQuery) {
       setName(editQuery.name)
       setSql(editQuery.sql)
       setVariables(editQuery.variables)
+      setSelectedAgents(editQuery.assignedAgents ?? [])
     } else {
       setName("")
       setSql("")
       setVariables([])
+      setSelectedAgents([])
     }
   }, [editQuery])
 
@@ -69,6 +108,10 @@ export function CreateQueryDialog({
     setVariables(variables.filter((v) => v !== variable))
   }
 
+  const toggleAgent = (agentUid: string) => {
+    setSelectedAgents((prev) => (prev.includes(agentUid) ? prev.filter((id) => id !== agentUid) : [...prev, agentUid]))
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -79,6 +122,7 @@ export function CreateQueryDialog({
           name,
           sql,
           variables,
+          assignedAgents: selectedAgents,
           updatedAt: serverTimestamp(),
         })
         toast({
@@ -90,6 +134,7 @@ export function CreateQueryDialog({
           name,
           sql,
           variables,
+          assignedAgents: selectedAgents,
           createdAt: serverTimestamp(),
         })
 
@@ -102,6 +147,7 @@ export function CreateQueryDialog({
       setName("")
       setSql("")
       setVariables([])
+      setSelectedAgents([])
       if (onSuccess) onSuccess()
     } catch (error) {
       console.error("[v0] Error creating or updating query:", error)
@@ -133,7 +179,7 @@ export function CreateQueryDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
-          <div className="space-y-4 py-4">
+          <div className="space-y-4 py-4 max-h-[70vh] overflow-y-auto">
             <div className="space-y-2">
               <Label htmlFor="name">Query Name</Label>
               <Input
@@ -198,6 +244,34 @@ export function CreateQueryDialog({
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Assign to Agents</Label>
+              <p className="text-xs text-muted-foreground">
+                Select which agents can access this query. Leave empty to make available to all agents.
+              </p>
+              <div className="border rounded p-3 space-y-2 max-h-[200px] overflow-y-auto">
+                {agentsLoading ? (
+                  <p className="text-sm text-muted-foreground">Loading agents...</p>
+                ) : agents.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No agents found</p>
+                ) : (
+                  agents.map((agent) => (
+                    <div key={agent.uid} className="flex items-center gap-2">
+                      <Checkbox
+                        id={agent.uid}
+                        checked={selectedAgents.includes(agent.uid)}
+                        onCheckedChange={() => toggleAgent(agent.uid)}
+                        disabled={loading}
+                      />
+                      <Label htmlFor={agent.uid} className="text-sm cursor-pointer font-normal">
+                        {agent.email}
+                      </Label>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
           <DialogFooter>

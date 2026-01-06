@@ -33,6 +33,7 @@ export interface Query {
   sql: string
   variables: string[]
   createdAt: string
+  assignedAgents?: string[] // Array of agent UIDs who can access this query
 }
 
 export interface Command {

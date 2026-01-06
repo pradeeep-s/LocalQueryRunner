@@ -1,27 +1,17 @@
 "use client"
 
+import type React from "react"
+
 import { useEffect, useState } from "react"
 import { db, auth } from "@/lib/firebase-client"
-import {
-  collection,
-  getDocs,
-  getDoc,
-  doc,
-  query,
-  where,
-} from "firebase/firestore"
+import { collection, getDocs, getDoc, doc, query, where } from "firebase/firestore"
 
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Users, UserCog, Database, Activity } from "lucide-react"
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
-  const [role, setRole] = useState<"admin" | "engineer">("admin")
+  const [role, setRole] = useState<"admin" | "engineer" | "agent">("admin")
   const [stats, setStats] = useState({
     clients: 0,
     agents: 0,
@@ -41,24 +31,21 @@ export default function DashboardPage() {
       if (!user) return
 
       const token = await user.getIdTokenResult()
-      const userRole = (token.claims.role as "admin" | "engineer") || "admin"
+      const userRole = (token.claims.role as "admin" | "engineer" | "agent") || "admin"
       setRole(userRole)
 
       /* ===================== ADMIN ===================== */
       if (userRole === "admin") {
-        const [clientsSnap, usersSnap, configsSnap, commandsSnap] =
-          await Promise.all([
-            getDocs(collection(db, "clients")),
-            getDocs(collection(db, "users")),
-            getDocs(collection(db, "db_configs")),
-            getDocs(collection(db, "commands")),
-          ])
+        const [clientsSnap, usersSnap, configsSnap, commandsSnap] = await Promise.all([
+          getDocs(collection(db, "clients")),
+          getDocs(collection(db, "users")),
+          getDocs(collection(db, "db_configs")),
+          getDocs(collection(db, "commands")),
+        ])
 
         setStats({
           clients: clientsSnap.size,
-          agents: usersSnap.docs.filter(
-            (d) => d.data().role === "agent"
-          ).length,
+          agents: usersSnap.docs.filter((d) => d.data().role === "agent").length,
           configs: configsSnap.size,
           queries: commandsSnap.size,
         })
@@ -75,33 +62,20 @@ export default function DashboardPage() {
         return
       }
 
-      const assignedClients: string[] =
-        userSnap.data().assignedClients || []
+      const assignedClients: string[] = userSnap.data().assignedClients || []
 
       /* ---------- Clients ---------- */
-      const clientDocs = await Promise.all(
-        assignedClients.map((cid) =>
-          getDoc(doc(db, "clients", cid))
-        )
-      )
+      const clientDocs = await Promise.all(assignedClients.map((cid) => getDoc(doc(db, "clients", cid))))
       const validClients = clientDocs.filter((d) => d.exists())
 
       /* ---------- DB Configs ---------- */
-      const configDocs = await Promise.all(
-        assignedClients.map((cid) =>
-          getDoc(doc(db, "db_configs", cid))
-        )
-      )
+      const configDocs = await Promise.all(assignedClients.map((cid) => getDoc(doc(db, "db_configs", cid))))
       const validConfigs = configDocs.filter((d) => d.exists())
 
       /* ---------- Agents (per client) ---------- */
       let agentCount = 0
       for (const cid of assignedClients) {
-        const q = query(
-          collection(db, "users"),
-          where("role", "==", "agent"),
-          where("clientId", "==", cid)
-        )
+        const q = query(collection(db, "users"), where("role", "==", "agent"), where("clientId", "==", cid))
         const snap = await getDocs(q)
         agentCount += snap.size
       }
@@ -109,10 +83,7 @@ export default function DashboardPage() {
       /* ---------- Commands (per client) ---------- */
       let commandCount = 0
       for (const cid of assignedClients) {
-        const q = query(
-          collection(db, "commands"),
-          where("clientId", "==", cid)
-        )
+        const q = query(collection(db, "commands"), where("clientId", "==", cid))
         const snap = await getDocs(q)
         commandCount += snap.size
       }
@@ -134,41 +105,35 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold tracking-tight">
-          {role === "engineer" ? "Engineer Dashboard" : "Admin Dashboard"}
+          {role === "engineer" ? "Engineer Dashboard" : role === "agent" ? "Agent Dashboard" : "Admin Dashboard"}
         </h1>
         <p className="text-muted-foreground">
           {role === "engineer"
             ? "Welcome to your engineer control panel"
-            : "Welcome to the admin control panel"}
+            : role === "agent"
+              ? "Welcome to your agent control panel"
+              : "Welcome to the admin control panel"}
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          title={role === "engineer" ? "Assigned Clients" : "Total Clients"}
-          value={stats.clients}
-          icon={<Users />}
-          loading={loading}
-        />
-        <StatCard
-          title={role === "engineer" ? "Assigned Agents" : "Total Agents"}
-          value={stats.agents}
-          icon={<UserCog />}
-          loading={loading}
-        />
-        <StatCard
-          title="DB Configurations"
-          value={stats.configs}
-          icon={<Database />}
-          loading={loading}
-        />
-        <StatCard
-          title="Queries Executed"
-          value={stats.queries}
-          icon={<Activity />}
-          loading={loading}
-        />
-      </div>
+      {role !== "agent" && (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            title={role === "engineer" ? "Assigned Clients" : "Total Clients"}
+            value={stats.clients}
+            icon={<Users />}
+            loading={loading}
+          />
+          <StatCard
+            title={role === "engineer" ? "Assigned Agents" : "Total Agents"}
+            value={stats.agents}
+            icon={<UserCog />}
+            loading={loading}
+          />
+          <StatCard title="DB Configurations" value={stats.configs} icon={<Database />} loading={loading} />
+          <StatCard title="Queries Executed" value={stats.queries} icon={<Activity />} loading={loading} />
+        </div>
+      )}
     </div>
   )
 }
@@ -191,9 +156,7 @@ function StatCard({
         <div className="h-4 w-4 text-muted-foreground">{icon}</div>
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold">
-          {loading ? "…" : value}
-        </div>
+        <div className="text-2xl font-bold">{loading ? "…" : value}</div>
         <p className="text-xs text-muted-foreground">Live count</p>
       </CardContent>
     </Card>

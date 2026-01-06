@@ -7,24 +7,24 @@ import { LayoutDashboard, Users, UserCog, Users2, Database, FileText, Play, Scro
 import { useEffect, useState } from "react"
 import { auth } from "@/lib/firebase-client"
 
-const menuItems = [
+const adminMenuItems = [
   {
     title: "Dashboard",
     href: "/admin/dashboard",
     icon: LayoutDashboard,
-    roles: ["admin", "engineer"],
+    roles: ["admin"],
   },
   {
     title: "Clients",
     href: "/admin/clients",
     icon: Users,
-    roles: ["admin", "engineer"],
+    roles: ["admin"],
   },
   {
     title: "Agents",
     href: "/admin/agents",
     icon: UserCog,
-    roles: ["admin", "engineer"],
+    roles: ["admin"],
   },
   {
     title: "Engineers",
@@ -48,20 +48,66 @@ const menuItems = [
     title: "Execute Query",
     href: "/admin/execute-query",
     icon: Play,
-    roles: ["admin", "engineer"],
+    roles: ["admin"],
   },
   {
     title: "Logs",
     href: "/admin/logs",
     icon: ScrollText,
-    roles: ["admin", "engineer"],
+    roles: ["admin"],
+  },
+]
+
+const engineerMenuItems = [
+  {
+    title: "Dashboard",
+    href: "/admin/dashboard",
+    icon: LayoutDashboard,
+  },
+  {
+    title: "Clients",
+    href: "/admin/clients",
+    icon: Users,
+  },
+  {
+    title: "Agents",
+    href: "/admin/agents",
+    icon: UserCog,
+  },
+  {
+    title: "Execute Query",
+    href: "/admin/execute-query",
+    icon: Play,
+  },
+  {
+    title: "Logs",
+    href: "/admin/logs",
+    icon: ScrollText,
+  },
+]
+
+const agentMenuItems = [
+  {
+    title: "Dashboard",
+    href: "/admin/dashboard",
+    icon: LayoutDashboard,
+  },
+  {
+    title: "Generate Custom Report",
+    href: "/admin/agent-reports",
+    icon: FileText,
+  },
+  {
+    title: "Logs",
+    href: "/admin/logs",
+    icon: ScrollText,
   },
 ]
 
 export function AdminSidebar() {
   const pathname = usePathname()
   const [userRole, setUserRole] = useState<string>("admin")
-  const [filteredMenuItems, setFilteredMenuItems] = useState(menuItems)
+  const [filteredMenuItems, setFilteredMenuItems] = useState(adminMenuItems)
 
   useEffect(() => {
     const getCurrentRole = async () => {
@@ -71,8 +117,13 @@ export function AdminSidebar() {
         const role = (idTokenResult.claims.role as string) || "admin"
         setUserRole(role)
 
-        const filtered = menuItems.filter((item) => item.roles.includes(role))
-        setFilteredMenuItems(filtered)
+        let menu = adminMenuItems
+        if (role === "engineer") {
+          menu = engineerMenuItems
+        } else if (role === "agent") {
+          menu = agentMenuItems
+        }
+        setFilteredMenuItems(menu)
       }
     }
     getCurrentRole()
@@ -82,7 +133,11 @@ export function AdminSidebar() {
     <aside className="fixed left-0 top-0 z-40 h-screen w-64 border-r border-sidebar-border bg-sidebar">
       <div className="flex h-16 items-center border-b border-sidebar-border px-6">
         <h1 className="text-lg font-semibold text-sidebar-foreground">
-          {userRole === "engineer" ? "Engineer Dashboard" : "Admin Dashboard"}
+          {userRole === "engineer"
+            ? "Engineer Dashboard"
+            : userRole === "agent"
+              ? "Agent Dashboard"
+              : "Admin Dashboard"}
         </h1>
       </div>
       <nav className="space-y-1 p-4">
