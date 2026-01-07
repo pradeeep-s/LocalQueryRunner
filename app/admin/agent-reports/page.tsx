@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 
 import {
   Card,
@@ -20,7 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Loader2, Download, FileText } from "lucide-react"
+import { Loader2, Download, FileText, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 import type { Query } from "@/types"
@@ -35,11 +35,11 @@ import {
   serverTimestamp,
   onSnapshot,
   deleteDoc,
+  query as firestoreQuery,
+  where,
 } from "firebase/firestore"
 
 import * as XLSX from "xlsx"
-import jsPDF from "jspdf"
-import "jspdf-autotable"
 
 type QueryType = "select" | "non-select" | null
 
@@ -64,6 +64,12 @@ export default function AgentReportsPage() {
   const [agentClientId, setAgentClientId] = useState("")
   const [agentUid, setAgentUid] = useState("")
 
+  const [downloading, setDownloading] = useState(false)
+  const [cleaning, setCleaning] = useState(false)
+
+  // Refs
+  const rowsUnsubscribeRef = useRef<(() => void) | null>(null)
+
   /* ================= INITIAL LOAD ================= */
   useEffect(() => {
     loadInitialData()
@@ -74,14 +80,12 @@ export default function AgentReportsPage() {
       const user = auth.currentUser
       if (!user) return
 
-      const token = await user.getIdTokenResult()
-      const role = token.claims.role as string
-
       const userDoc = await getDoc(doc(db, "users", user.uid))
       if (!userDoc.exists()) return
 
       const clientId = userDoc.data().clientId
       setAgentClientId(clientId)
+      setAgentUid(user.uid)
 
       const queriesSnap = await getDocs(collection(db, "queries"))
       const allQueries = queriesSnap.docs.map(d => ({
@@ -119,17 +123,26 @@ export default function AgentReportsPage() {
     e.preventDefault()
 
     setLoading(true)
-    setPolling(false)
+    setPolling(true)
     setCommandId(null)
     setRows([])
     setHeaders([])
     setQueryType(null)
     setResultMessage("")
 
+    // Clean up any previous listeners
+    if (rowsUnsubscribeRef.current) {
+      rowsUnsubscribeRef.current()
+      rowsUnsubscribeRef.current = null
+    }
+
     try {
+      const user = auth.currentUser
+      if (!user) throw new Error("User not authenticated")
+
       const ref = await addDoc(collection(db, "commands"), {
         clientId: agentClientId,
-        agentUid: agentUid,
+        agentUid: user.uid,
         queryId: selectedQueryId,
         variables,
         status: "pending",
@@ -137,7 +150,6 @@ export default function AgentReportsPage() {
       })
 
       setCommandId(ref.id)
-      setPolling(true)
 
       toast({
         title: "Query submitted",
@@ -145,6 +157,7 @@ export default function AgentReportsPage() {
       })
     } catch (err: any) {
       setLoading(false)
+      setPolling(false)
       toast({
         title: "Error",
         description: err.message || "Failed to run query",
@@ -153,12 +166,12 @@ export default function AgentReportsPage() {
     }
   }
 
-  /* ================= POLLING COMMAND STATUS ================= */
+  /* ================= LISTEN FOR COMMAND STATUS ================= */
   useEffect(() => {
-    if (!polling || !commandId) return
+    if (!commandId) return
 
-    const interval = setInterval(async () => {
-      const snap = await getDoc(doc(db, "commands", commandId))
+    // Listen for command status changes
+    const unsubCommand = onSnapshot(doc(db, "commands", commandId), (snap) => {
       if (!snap.exists()) return
 
       const data = snap.data()
@@ -170,21 +183,9 @@ export default function AgentReportsPage() {
         setQueryType(data.queryType)
         setResultMessage(data.result || "")
 
+        // If SELECT query, listen for results
         if (data.queryType === "select") {
-          const rowsRef = collection(
-            db,
-            "temp_query_results",
-            commandId,
-            "rows"
-          )
-
-          onSnapshot(rowsRef, snapshot => {
-            const docs = snapshot.docs.map(d => d.data())
-            setRows(docs)
-            if (docs.length > 0) {
-              setHeaders(Object.keys(docs[0]))
-            }
-          })
+          listenForResults(commandId, data.resultsPath || data.resultsId)
         }
 
         toast({
@@ -202,122 +203,337 @@ export default function AgentReportsPage() {
           variant: "destructive",
         })
       }
-    }, 2000)
+    })
 
-    return () => clearInterval(interval)
-  }, [polling, commandId])
+    return () => {
+      unsubCommand()
+    }
+  }, [commandId])
 
-     /* ================= COMPLETE CLEANUP TEMP RESULTS ================= */
-async function cleanupAllTempResults() {
-  try {
+  /* ================= LISTEN FOR RESULTS ================= */
+  const listenForResults = (currentCommandId: string, resultsPath?: string) => {
+    // Clean up previous listener if exists
+    if (rowsUnsubscribeRef.current) {
+      rowsUnsubscribeRef.current()
+    }
+
+    // Try to get results using different methods
+    const getResultsRef = async () => {
+      if (resultsPath) {
+        // If we have a direct path from the agent
+        const pathParts = resultsPath.split('/')
+        if (pathParts.length === 2) {
+          // Format: temp_query_results/{combinedId}
+          return collection(db, pathParts[0], pathParts[1], "rows")
+        }
+      }
+
+      // Method 1: Try combined ID format
+      const combinedId = `${currentCommandId}_${agentUid}`
+      return collection(db, "temp_query_results", combinedId, "rows")
+    }
+
+    getResultsRef().then(rowsRef => {
+      const unsubResults = onSnapshot(rowsRef, (rowsSnap) => {
+        const docs = rowsSnap.docs.map(d => d.data())
+        setRows(docs)
+        if (docs.length > 0) {
+          setHeaders(Object.keys(docs[0]))
+        }
+      }, (error) => {
+        console.error("Error listening to results:", error)
+        // Try alternative method if first fails
+        tryAlternativeResultsListen(currentCommandId)
+      })
+
+      rowsUnsubscribeRef.current = unsubResults
+    }).catch(err => {
+      console.error("Error setting up results listener:", err)
+      // Try alternative method
+      tryAlternativeResultsListen(currentCommandId)
+    })
+  }
+
+  /* ================= ALTERNATIVE RESULTS LISTENING ================= */
+  const tryAlternativeResultsListen = (currentCommandId: string) => {
+    // Try to find results by querying metadata
     const tempResultsRef = collection(db, "temp_query_results")
-    const querySnap = await getDocs(tempResultsRef)
-    
-    // Delete all command documents and their subcollections
-    const deletePromises = querySnap.docs.map(async (commandDoc) => {
-      const commandId = commandDoc.id
+    const q = firestoreQuery(
+      tempResultsRef,
+      where("originalCommandId", "==", currentCommandId),
+      where("originalAgentUid", "==", agentUid)
+    )
+
+    const unsubMeta = onSnapshot(q, (metaSnap) => {
+      if (!metaSnap.empty) {
+        const metaDoc = metaSnap.docs[0]
+        const combinedId = metaDoc.id
+        
+        // Now listen to rows
+        const rowsRef = collection(db, "temp_query_results", combinedId, "rows")
+        const unsubRows = onSnapshot(rowsRef, (rowsSnap) => {
+          const docs = rowsSnap.docs.map(d => d.data())
+          setRows(docs)
+          if (docs.length > 0) {
+            setHeaders(Object.keys(docs[0]))
+          }
+        })
+        
+        rowsUnsubscribeRef.current = () => {
+          unsubMeta()
+          unsubRows()
+        }
+      }
+    })
+  }
+
+  /* ================= CLEANUP ON UNMOUNT ================= */
+  useEffect(() => {
+    return () => {
+      // Clean up Firestore listeners when component unmounts
+      if (rowsUnsubscribeRef.current) {
+        rowsUnsubscribeRef.current()
+      }
+    }
+  }, [])
+
+  /* ================= EXPORT EXCEL - DELETE ONLY USER'S RESULTS ================= */
+  const exportToExcel = async () => {
+    if (!rows.length) {
+      toast({
+        title: "No data",
+        description: "No data available to export",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setDownloading(true)
+    try {
+      // Create workbook
+      const workbook = XLSX.utils.book_new()
+      
+      // Create main data sheet
+      const worksheet = XLSX.utils.json_to_sheet(rows)
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Data")
+      
+      // Create info sheet
+      const infoData = [
+        ["Report Information"],
+        ["Query Name:", selectedQuery?.name || "Unknown"],
+        ["Generated:", new Date().toLocaleString()],
+        ["Total Rows:", rows.length.toString()],
+        ["Total Columns:", headers.length.toString()],
+        [""],
+        ["Column Headers:"],
+        ...headers.map(h => [h])
+      ]
+      const infoSheet = XLSX.utils.aoa_to_sheet(infoData)
+      XLSX.utils.book_append_sheet(workbook, infoSheet, "Info")
+      
+      // Generate filename
+      const fileName = `report-${selectedQuery?.name?.replace(/\s+/g, '_') || 'query'}-${new Date().toISOString().slice(0, 10)}.xlsx`
+      
+      // Download file
+      XLSX.writeFile(workbook, fileName)
+      
+      toast({
+        title: "Export successful",
+        description: `File "${fileName}" downloaded`,
+      })
+
+      // Now delete ONLY the current user's temp results
+      await deleteCurrentUserTempResults()
+
+    } catch (error) {
+      console.error("Error exporting to Excel:", error)
+      toast({
+        title: "Export failed",
+        description: "Failed to generate Excel file",
+        variant: "destructive",
+      })
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  /* ================= DELETE ONLY CURRENT USER'S TEMP RESULTS ================= */
+  const deleteCurrentUserTempResults = async () => {
+    if (!commandId || !agentUid) {
+      console.log("No commandId or agentUid, skipping cleanup")
+      return
+    }
+
+    setCleaning(true)
+    try {
+      // Clean up listener first
+      if (rowsUnsubscribeRef.current) {
+        rowsUnsubscribeRef.current()
+        rowsUnsubscribeRef.current = null
+      }
+
+      console.log("Deleting temp results for user:", agentUid, "command:", commandId)
+      
+      // METHOD 1: Delete by combined ID (agent's specific results)
+      const combinedId = `${commandId}_${agentUid}`
       
       // Delete rows subcollection
-      const rowsRef = collection(db, "temp_query_results", commandId, "rows")
+      const rowsRef = collection(db, "temp_query_results", combinedId, "rows")
       const rowsSnap = await getDocs(rowsRef)
-      const deleteRows = rowsSnap.docs.map(d => deleteDoc(d.ref))
-      await Promise.all(deleteRows)
+      const deleteRowsPromises = rowsSnap.docs.map(d => deleteDoc(d.ref))
       
-      // Delete meta subcollection if it exists
-      const metaRef = collection(db, "temp_query_results", commandId, "meta")
-      const metaSnap = await getDocs(metaRef)
-      const deleteMeta = metaSnap.docs.map(d => deleteDoc(d.ref))
-      await Promise.all(deleteMeta)
+      // Delete meta document
+      const metaRef = doc(db, "temp_query_results", combinedId)
+      const deleteMetaPromise = deleteDoc(metaRef).catch(err => {
+        console.log("Meta document might not exist:", err.message)
+      })
       
-      // Finally delete the command document itself
-      await deleteDoc(doc(db, "temp_query_results", commandId))
-    })
+      // Wait for all deletions
+      await Promise.all([...deleteRowsPromises, deleteMetaPromise])
+      console.log("Deleted results for combined ID:", combinedId)
+
+      // METHOD 2: Also query and delete any results with agentUid metadata
+      const tempResultsRef = collection(db, "temp_query_results")
+      const q = firestoreQuery(
+        tempResultsRef,
+        where("agentUid", "==", agentUid)
+      )
+      
+      const agentResultsSnap = await getDocs(q)
+      const otherDeletions = agentResultsSnap.docs.map(async (docSnap) => {
+        const resultId = docSnap.id
+        
+        // Delete rows subcollection
+        const otherRowsRef = collection(db, "temp_query_results", resultId, "rows")
+        const otherRowsSnap = await getDocs(otherRowsRef)
+        const deleteOtherRows = otherRowsSnap.docs.map(d => deleteDoc(d.ref))
+        
+        // Delete meta document
+        await Promise.all([...deleteOtherRows, deleteDoc(docSnap.ref)])
+        console.log("Deleted additional result:", resultId)
+      })
+      
+      await Promise.all(otherDeletions)
+
+      // Clear UI state
+      setRows([])
+      setHeaders([])
+      setQueryType(null)
+      setResultMessage("")
+      
+      console.log("Cleanup completed successfully for user:", agentUid)
+
+    } catch (error) {
+      console.error("Error deleting user temp results:", error)
+      // Don't show error toast here to avoid interrupting download success
+    } finally {
+      setCleaning(false)
+    }
+  }
+
+  /* ================= CLEAR UI ONLY (NO DATABASE DELETE) ================= */
+  const clearCurrentResults = () => {
+    // Clear only UI state
+    setRows([])
+    setHeaders([])
+    setQueryType(null)
+    setResultMessage("")
+    setCommandId(null)
+    setPolling(false)
     
-    await Promise.all(deletePromises)
+    // Clean up listener
+    if (rowsUnsubscribeRef.current) {
+      rowsUnsubscribeRef.current()
+      rowsUnsubscribeRef.current = null
+    }
     
     toast({
-      title: "Cleanup complete",
-      description: `All temporary results deleted successfully`,
-    })
-  } catch (error) {
-    console.error("Error cleaning up all temp results:", error)
-    toast({
-      title: "Cleanup error",
-      description: "Failed to delete temporary results",
-      variant: "destructive",
+      title: "Results cleared",
+      description: "Display results have been cleared",
     })
   }
-}
 
-/* ================= CLEANUP SINGLE COMMAND'S TEMP DATA ================= */
-async function cleanupTempResults() {
-  if (!commandId) return
+  /* ================= DELETE ALL TEMP DATA FOR CURRENT USER ================= */
+  const handleCleanupAllUserTempData = async () => {
+    if (!agentUid) {
+      toast({
+        title: "Not authenticated",
+        description: "Please login first",
+        variant: "destructive",
+      })
+      return
+    }
 
-  try {
-    // Delete all rows
-    const rowsRef = collection(db, "temp_query_results", commandId, "rows")
-    const rowsSnap = await getDocs(rowsRef)
-    const deleteRowsPromises = rowsSnap.docs.map(d => deleteDoc(d.ref))
-    
-    // Delete all meta documents if they exist
-    const metaRef = collection(db, "temp_query_results", commandId, "meta")
-    const metaSnap = await getDocs(metaRef)
-    const deleteMetaPromises = metaSnap.docs.map(d => deleteDoc(d.ref))
-    
-    // Wait for all deletions
-    await Promise.all([...deleteRowsPromises, ...deleteMetaPromises])
-    
-    // Finally delete the command document itself
-    await deleteDoc(doc(db, "temp_query_results", commandId))
-    
-    // Also delete from commands collection
-    const commandRef = doc(db, "commands", commandId)
-    await deleteDoc(commandRef)
+    setCleaning(true)
+    try {
+      // Query ALL temp results for this user
+      const tempResultsRef = collection(db, "temp_query_results")
+      const q = firestoreQuery(
+        tempResultsRef,
+        where("agentUid", "==", agentUid)
+      )
+      
+      const userResultsSnap = await getDocs(q)
+      
+      // Also get results with combined IDs containing agentUid
+      const allResultsSnap = await getDocs(tempResultsRef)
+      
+      const deletePromises: Promise<void>[] = []
+      
+      // Delete results with agentUid field
+      userResultsSnap.docs.forEach(docSnap => {
+        const resultId = docSnap.id
+        deletePromises.push(
+          (async () => {
+            // Delete rows subcollection
+            const rowsRef = collection(db, "temp_query_results", resultId, "rows")
+            const rowsSnap = await getDocs(rowsRef)
+            const deleteRows = rowsSnap.docs.map(d => deleteDoc(d.ref))
+            
+            // Delete meta document
+            await Promise.all([...deleteRows, deleteDoc(docSnap.ref)])
+          })()
+        )
+      })
+      
+      // Delete results with combined IDs containing agentUid
+      allResultsSnap.docs.forEach(docSnap => {
+        const docId = docSnap.id
+        if (docId.includes(agentUid) && !userResultsSnap.docs.find(d => d.id === docId)) {
+          deletePromises.push(
+            (async () => {
+              // Delete rows subcollection
+              const rowsRef = collection(db, "temp_query_results", docId, "rows")
+              const rowsSnap = await getDocs(rowsRef)
+              const deleteRows = rowsSnap.docs.map(d => deleteDoc(d.ref))
+              
+              // Delete meta document
+              await Promise.all([...deleteRows, deleteDoc(docSnap.ref)])
+            })()
+          )
+        }
+      })
+      
+      await Promise.all(deletePromises)
 
-    toast({
-      title: "Cleanup complete",
-      description: "Temporary data removed successfully",
-    })
-  } catch (error) {
-    console.error("Error cleaning up temp results:", error)
-    toast({
-      title: "Cleanup error",
-      description: "Failed to remove temporary data",
-      variant: "destructive",
-    })
-  }
-}
+      // Clear current UI
+      clearCurrentResults()
+      
+      toast({
+        title: "Cleanup complete",
+        description: `Deleted ${userResultsSnap.size} temporary result(s) for your account`,
+      })
 
-  /* ================= EXPORT PDF ================= 
-  const exportToPdf = async () => {
-    if (!rows.length) return
-
-    const pdf = new jsPDF()
-    pdf.setFontSize(16)
-    pdf.text("Report", 14, 15)
-    pdf.setFontSize(10)
-    pdf.text(`Query: ${selectedQuery?.name}`, 14, 25)
-    pdf.text(`Generated: ${new Date().toLocaleString()}`, 14, 32)
-
-    ;(pdf as any).autoTable({
-      head: [headers],
-      body: rows.map(r => headers.map(h => r[h])),
-      startY: 40,
-    })
-
-    pdf.save(`report-${Date.now()}.pdf`)
-    await cleanupTempResults()
-  }
-  */
-  /* ================= EXPORT EXCEL ================= */
-  const exportToExcel = async () => {
-    if (!rows.length) return
-
-    const worksheet = XLSX.utils.json_to_sheet(rows)
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Report")
-    XLSX.writeFile(workbook, `report-${Date.now()}.xlsx`)
-    await cleanupAllTempResults()
+    } catch (error) {
+      console.error("Error cleaning up user temp data:", error)
+      toast({
+        title: "Cleanup failed",
+        description: "Failed to delete temporary data",
+        variant: "destructive",
+      })
+    } finally {
+      setCleaning(false)
+    }
   }
 
   /* ================= UI ================= */
@@ -326,7 +542,7 @@ async function cleanupTempResults() {
       <div>
         <h1 className="text-3xl font-bold">Generate Custom Report</h1>
         <p className="text-muted-foreground">
-          Select a query and variables
+          Run a query and export the results
         </p>
       </div>
 
@@ -360,7 +576,7 @@ async function cleanupTempResults() {
                   <div key={v}>
                     <Label>{v}</Label>
                     <Input
-                      value={variables[v]}
+                      value={variables[v] ?? ""}
                       onChange={e =>
                         setVariables({
                           ...variables,
@@ -385,52 +601,137 @@ async function cleanupTempResults() {
           </CardContent>
         </Card>
 
-        {/* EXPORT */}
+        {/* EXPORT PANEL */}
         <Card>
           <CardHeader>
-            <CardTitle>Export</CardTitle>
+            <CardTitle>Export Results</CardTitle>
+            <CardDescription>
+              Download data after query execution
+            </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-4">
             {queryType === "select" && rows.length > 0 && (
               <>
-                <p className="text-sm text-muted-foreground">
-                  Rows: {rows.length}, Columns: {headers.length}
-                </p>
-                <Button
-                  onClick={exportToExcel}
-                  variant="outline"
-                  className="w-full"
-                >
-                  <Download className="mr-2 h-4 w-4" /> Excel
-                </Button>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Query Results</p>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="bg-muted p-2 rounded">
+                      <span className="text-muted-foreground">Rows:</span>
+                      <span className="ml-2 font-semibold">{rows.length}</span>
+                    </div>
+                    <div className="bg-muted p-2 rounded">
+                      <span className="text-muted-foreground">Columns:</span>
+                      <span className="ml-2 font-semibold">{headers.length}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Button
+                    onClick={exportToExcel}
+                    disabled={downloading || cleaning}
+                    className="w-full"
+                  >
+                    {downloading ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="mr-2 h-4 w-4" />
+                    )}
+                    {downloading ? "Downloading..." : "Download Excel"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Downloads and clears YOUR results only
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Button
+                    onClick={clearCurrentResults}
+                    variant="outline"
+                    className="w-full"
+                    size="sm"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Clear Display
+                  </Button>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Clears display without deleting data
+                  </p>
+                </div>
+
+                <div className="pt-4 border-t">
+                  <Button
+                    onClick={handleCleanupAllUserTempData}
+                    disabled={cleaning}
+                    variant="destructive"
+                    className="w-full"
+                    size="sm"
+                  >
+                    {cleaning ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="mr-2 h-4 w-4" />
+                    )}
+                    {cleaning ? "Cleaning..." : "Delete All My Results"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Deletes ALL temporary results for your account
+                  </p>
+                </div>
               </>
             )}
 
             {queryType === "non-select" && (
-              <p className="text-sm text-muted-foreground text-center">
-                {resultMessage}
-              </p>
+              <div className="text-center p-4 border rounded bg-muted/50">
+                <p className="font-medium">Non-Select Query</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {resultMessage}
+                </p>
+              </div>
+            )}
+
+            {polling && !queryType && (
+              <div className="text-center p-4 border rounded bg-muted/50">
+                <Loader2 className="h-8 w-8 animate-spin mx-auto" />
+                <p className="mt-2 text-sm font-medium">Processing query...</p>
+                <p className="text-xs text-muted-foreground">
+                  Waiting for agent to execute command
+                </p>
+              </div>
+            )}
+
+            {!queryType && !polling && rows.length === 0 && (
+              <div className="text-center p-8 border rounded">
+                <FileText className="h-12 w-12 mx-auto text-muted-foreground opacity-50" />
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Run a query to see results here
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>
       </form>
 
-      {/* PREVIEW */}
+      {/* DATA PREVIEW */}
       {queryType === "select" && rows.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>Report Preview</CardTitle>
-            <CardDescription>
-              Generated at {new Date().toLocaleString()}
-            </CardDescription>
+            <div className="flex justify-between items-center">
+              <div>
+                <CardTitle>Data Preview</CardTitle>
+                <CardDescription>
+                  {selectedQuery?.name} • {rows.length} rows • {headers.length} columns
+                </CardDescription>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto border rounded">
               <table className="w-full text-sm">
                 <thead>
-                  <tr>
+                  <tr className="bg-muted/50">
                     {headers.map(h => (
-                      <th key={h} className="px-4 py-2 text-left">
+                      <th key={h} className="px-4 py-3 text-left font-medium">
                         {h}
                       </th>
                     ))}
@@ -438,10 +739,12 @@ async function cleanupTempResults() {
                 </thead>
                 <tbody>
                   {rows.slice(0, 10).map((row, i) => (
-                    <tr key={i}>
+                    <tr key={i} className="border-t hover:bg-muted/30">
                       {headers.map(h => (
                         <td key={h} className="px-4 py-2">
-                          {String(row[h])}
+                          {typeof row[h] === 'object' 
+                            ? JSON.stringify(row[h])
+                            : String(row[h] ?? '')}
                         </td>
                       ))}
                     </tr>
@@ -449,9 +752,9 @@ async function cleanupTempResults() {
                 </tbody>
               </table>
               {rows.length > 10 && (
-                <p className="text-xs text-muted-foreground mt-2">
-                  Showing 10 of {rows.length} rows
-                </p>
+                <div className="p-3 border-t bg-muted/20 text-center text-sm text-muted-foreground">
+                  Showing first 10 of {rows.length} rows. Download full dataset for complete results.
+                </div>
               )}
             </div>
           </CardContent>
