@@ -42,7 +42,7 @@ export default function DatabaseCredentialsPage() {
         id: doc.id,
       })) as Client[]
 
-      console.log("[v0] Fetched db_configs:", configsData.length)
+      //console.log("[v0] Fetched db_configs:", configsData.length)
       console.log("[v0] Fetched clients:", clientsData.length)
 
       setConfigs(configsData)
