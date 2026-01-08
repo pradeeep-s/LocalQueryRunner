@@ -766,26 +766,6 @@ export default function AgentReportsPage() {
                 </div>
               )}
             </div>
-            
-            {/* Column Order Info */}
-            {columnOrder.length > 0 && (
-              <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded">
-                <div className="flex items-center text-green-700">
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  <span className="text-sm font-medium">Column order preserved from SQL query</span>
-                </div>
-                <p className="text-xs text-green-600 mt-1">
-                  Columns appear in the same order as defined in your SELECT statement: {columnOrder.join(', ')}
-                </p>
-              </div>
-            )}
-            
-            {/* Debug Info */}
-            <div className="mt-4 p-3 bg-muted/50 rounded text-xs">
-              <p className="font-mono">Results ID: {combinedId}</p>
-              <p className="text-muted-foreground">Meta document at: temp_query_results/{combinedId}</p>
-              <p className="text-muted-foreground">Rows collection at: temp_query_results/{combinedId}/rows</p>
-            </div>
           </CardContent>
         </Card>
       )}
