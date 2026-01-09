@@ -1,4 +1,5 @@
 export interface Client {
+  company: any
   id: string
   name: string
   status: "active" | "disabled"
@@ -27,6 +28,7 @@ export interface DatabaseConfig {
 }
 
 export interface Query {
+  description: any
   query: string
   id: string
   name: string
@@ -37,6 +39,11 @@ export interface Query {
 }
 
 export interface Command {
+  resultsPath: boolean
+  queryType: string
+  sql: any
+  queryName: any
+  executionTime: any
   id: string
   clientId: string
   queryId: string
