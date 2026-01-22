@@ -1,7 +1,7 @@
 import crypto from "crypto"
 
 const MASTER_KEY = process.env.ENCRYPTION_SECRET!
-console.log("ENCRYPTION_SECRET:", process.env.ENCRYPTION_SECRET)
+//console.log("ENCRYPTION_SECRET:", process.env.ENCRYPTION_SECRET)
 
 
 if (!MASTER_KEY) {
@@ -13,7 +13,7 @@ const ITERATIONS = 100000
 const KEY_LENGTH = 32
 const DIGEST = "sha256"
 
-console.log("ENCRYPTION_SECRET:", process.env.ENCRYPTION_SECRET)
+//console.log("ENCRYPTION_SECRET:", process.env.ENCRYPTION_SECRET)
 
 
 function deriveKey(salt: Buffer) {
